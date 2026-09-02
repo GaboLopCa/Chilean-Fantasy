@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chilean Fantasy</title>
+    <link rel="icon" href="data:,">
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-white min-h-screen font-sans">
+
+    <!-- BARRA NAVEGACIÓN -->
+    <nav class="bg-gray-800 border-b border-gray-700 px-6 py-4 flex justify-between items-center">
+        <h1 class="text-2xl font-bold text-emerald-400 tracking-wide">🇨🇱 Chilean Fantasy</h1>
+        
+        <div id="userInfo" class="hidden flex items-center space-x-6">
+            <span class="text-sm bg-gray-700 px-3 py-1.5 rounded-full border border-gray-600">
+                👤 <strong id="lblUsuario" class="text-emerald-300">--</strong>
+            </span>
+            <span class="text-sm bg-gray-700 px-3 py-1.5 rounded-full border border-gray-600">
+                💰 Saldo: <strong id="lblSaldo" class="text-yellow-400">$0</strong>
+            </span>
+            <button id="btnCerrarSesion" class="text-xs bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded text-white font-medium transition">
+                Cerrar Sesión
+            </button>
+        </div>
+    </nav>
+
+    <!-- PANEL PRINCIPAL -->
+    <main class="max-w-6xl mx-auto p-6">
+        
+        <!-- LOGIN -->
+        <section id="secAuth" class="max-w-md mx-auto bg-gray-800 p-8 rounded-xl shadow-2xl border border-gray-700 mt-10">
+            <h2 class="text-2xl font-bold mb-6 text-center text-emerald-400">Iniciar Sesión</h2>
+            
+            <form id="formLogin" class="space-y-4">
+                <div>
+                    <label class="block text-xs uppercase tracking-wider text-gray-400 mb-1">Correo o Usuario</label>
+                    <input type="text" id="txtUsername" required class="w-full bg-gray-900 border border-gray-700 rounded p-2.5 text-white focus:outline-none focus:border-emerald-500">
+                </div>
+                <div>
+                    <label class="block text-xs uppercase tracking-wider text-gray-400 mb-1">Contraseña</label>
+                    <input type="password" id="txtPassword" required class="w-full bg-gray-900 border border-gray-700 rounded p-2.5 text-white focus:outline-none focus:border-emerald-500">
+                </div>
+                <button type="submit" class="w-full bg-emerald-600 hover:bg-emerald-500 font-bold py-2.5 rounded transition text-white">
+                    Ingresar
+                </button>
+            </form>
+            <p id="authError" class="text-red-400 text-sm mt-4 text-center hidden"></p>
+        </section>
+
+        <!-- PANEL DE JUEGO -->
+        <section id="secApp" class="hidden space-y-6">
+            <div class="flex border-b border-gray-700 space-x-4">
+                <button data-tab="plantilla" class="tab-btn py-2 px-4 border-b-2 border-emerald-400 font-semibold text-emerald-400" id="btnTabPlantilla">
+                    Mi Plantilla
+                </button>
+                <button data-tab="mercado" class="tab-btn py-2 px-4 border-b-2 border-transparent font-semibold text-gray-400 hover:text-white" id="btnTabMercado">
+                    Mercado de Fichajes
+                </button>
+                <button data-tab="ranking" class="tab-btn py-2 px-4 border-b-2 border-transparent font-semibold text-gray-400 hover:text-white" id="btnTabRanking">
+                    Clasificación
+                </button>
+            </div>
+
+            <div id="tabPlantilla" class="tab-content">
+                <h3 class="text-xl font-bold mb-4 text-gray-200">Tu Plantilla Actual</h3>
+                <div id="contenedorPlantilla"></div>
+            </div>
+
+            <div id="tabMercado" class="tab-content hidden">
+                <h3 class="text-xl font-bold mb-4 text-gray-200">Jugadores Disponibles</h3>
+                <div id="contenedorMercado"></div>
+            </div>
+
+            <div id="tabRanking" class="tab-content hidden">
+                <h3 class="text-xl font-bold mb-4 text-gray-200">Tabla de Posiciones</h3>
+                <div class="bg-gray-800 p-6 rounded-xl border border-gray-700">Próximamente ranking general...</div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- MODAL BLINDAJE -->
+    <div id="modalBlindar" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+        <div class="bg-gray-800 border border-gray-700 rounded-xl p-6 max-w-sm w-full space-y-4">
+            <h3 class="text-lg font-bold text-emerald-400">🛡️ Blindar Jugador</h3>
+            <p class="text-xs text-gray-300">Ingresa el monto para incrementar la cláusula de rescisión de este jugador.</p>
+            <input type="number" id="txtMontoIncremento" min="100000" step="100000" placeholder="Ej: 500000" class="w-full bg-gray-900 border border-gray-700 rounded p-2.5 text-white focus:outline-none focus:border-emerald-500">
+            <div class="flex space-x-3 pt-2">
+                <button id="btnConfirmarBlindar" class="flex-1 bg-emerald-600 hover:bg-emerald-500 font-bold py-2 rounded text-white text-sm">Aumentar</button>
+                <button id="btnCancelarBlindar" class="flex-1 bg-gray-700 hover:bg-gray-600 font-bold py-2 rounded text-gray-300 text-sm">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MÓDULO JS -->
+    <script type="module" src="js/app.js"></script>
+</body>
+</html>
