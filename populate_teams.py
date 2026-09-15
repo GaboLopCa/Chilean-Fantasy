@@ -1,7 +1,7 @@
 import os
-import psycopg2
 import requests
 from dotenv import load_dotenv
+from database import get_raw_db_connection
 
 load_dotenv()
 
@@ -10,16 +10,6 @@ HEADERS = {
     "x-rapidapi-key": os.getenv("RAPIDAPI_KEY"),
     "x-rapidapi-host": os.getenv("RAPIDAPI_HOST"),
 }
-
-
-def get_db_connection():
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST"),
-        database=os.getenv("DB_NAME"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASS"),
-        port=os.getenv("DB_PORT"),
-    )
 
 
 def obtener_y_guardar_equipos():
@@ -48,7 +38,7 @@ def obtener_y_guardar_equipos():
     print(f"Se encontraron {len(teams_data)} equipos.")
 
     # 3. Guardar en Supabase
-    conn = get_db_connection()
+    conn = get_raw_db_connection()
     cursor = conn.cursor()
 
     sql_insert = """

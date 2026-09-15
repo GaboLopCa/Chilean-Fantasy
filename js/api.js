@@ -2,13 +2,19 @@ const API_URL = "http://127.0.0.1:8000";
 
 // Función auxiliar privada para abstraer y limpiar las peticiones Fetch
 async function request(endpoint, options = {}) {
+    const token = localStorage.getItem("token");
+
     const config = {
-        headers: { "Content-Type": "application/json", ...options.headers },
+        headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...options.headers
+        },
         ...options
     };
 
     const res = await fetch(`${API_URL}${endpoint}`, config);
-    
+
     // Manejo seguro del cuerpo de la respuesta en caso de ser JSON o texto vacío
     let data;
     try {
@@ -36,6 +42,13 @@ export const API = {
         });
     },
 
+    registro(nombre_usuario, email, password) {
+        return request("/auth/registro", {
+            method: "POST",
+            body: JSON.stringify({ nombre_usuario, email, password })
+        });
+    },
+
     // Usuarios y Plantillas
     obtenerUsuario(usuarioId) {
         return request(`/usuarios/${usuarioId}`);
@@ -49,32 +62,38 @@ export const API = {
         }
     },
 
+    guardarAlineacion(usuarioId, alineacion) {
+        return request(`/plantilla/${usuarioId}`, {
+            method: "PUT",
+            body: JSON.stringify({ jugadores: alineacion })
+        });
+    },
+
     // Mercado de Jugadores
     obtenerJugadores() {
         return request("/jugadores/");
     },
 
-    pujar(usuarioId, jugadorId, monto) {
+    pujar(jugadorId, monto) {
         return request("/mercado/pujar", {
             method: "POST",
-            body: JSON.stringify({ usuario_id: usuarioId, jugador_id: jugadorId, monto })
+            body: JSON.stringify({ jugador_id: jugadorId, monto })
         });
     },
 
-    pagarClausula(compradorId, jugadorId) {
+    pagarClausula(jugadorId) {
         return request("/mercado/pagar-clausula", {
             method: "POST",
-            body: JSON.stringify({ comprador_id: compradorId, jugador_id: jugadorId })
+            body: JSON.stringify({ jugador_id: jugadorId })
         });
     },
 
-    subirClausula(usuarioId, jugadorId, montoIncremento) {
+    subirClausula(jugadorId, montoIncremento) {
         return request("/mercado/subir-clausula", {
             method: "POST",
-            body: JSON.stringify({ 
-                usuario_id: usuarioId, 
-                jugador_id: jugadorId, 
-                monto_incremento: montoIncremento 
+            body: JSON.stringify({
+                jugador_id: jugadorId,
+                monto_incremento: montoIncremento
             })
         });
     },
@@ -84,10 +103,14 @@ export const API = {
         return request("/mercado/agentes-libres");
     },
 
-    comprarAgenteLibre(usuarioId, jugadorId) {
+    comprarAgenteLibre(jugadorId) {
         return request("/mercado/comprar-agente", {
             method: "POST",
-            body: JSON.stringify({ usuario_id: usuarioId, jugador_id: jugadorId })
+            body: JSON.stringify({ jugador_id: jugadorId })
         });
+    },
+
+    obtenerRanking() {
+        return request("/ranking");
     }
 };

@@ -4,7 +4,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 # 1. Importar tus routers (asegúrate de que los nombres de archivo coincidan)
-from routers import auth, jugadores, plantillas, usuarios, mercado 
+from routers import auth, jugadores, plantillas, usuarios, mercado, jornadas, ligas, ranking
 
 app = FastAPI()
 
@@ -14,6 +14,9 @@ app.include_router(jugadores.router)
 app.include_router(plantillas.router)
 app.include_router(usuarios.router)
 app.include_router(mercado.router)
+app.include_router(jornadas.router)
+app.include_router(ligas.router)
+app.include_router(ranking.router)
 
 # 3. Archivos estáticos y HTML principal
 if os.path.exists("js"):

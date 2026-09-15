@@ -1,8 +1,8 @@
 import os
 import time
-import psycopg2
 import requests
 from dotenv import load_dotenv
+from database import get_raw_db_connection
 
 load_dotenv()
 
@@ -12,18 +12,8 @@ HEADERS = {
 }
 
 
-def get_db_connection():
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST"),
-        database=os.getenv("DB_NAME"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASS"),
-        port=os.getenv("DB_PORT"),
-    )
-
-
 def obtener_y_guardar_jugadores():
-    conn = get_db_connection()
+    conn = get_raw_db_connection()
     cursor = conn.cursor()
 
     # 1. Obtener la lista de IDs de equipos guardados en la base de datos

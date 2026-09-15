@@ -27,17 +27,17 @@ def validar_reglas_plantilla(cursor, jugador_ids: list[int], usuario_id: str):
         )
 
     cursor.execute(
-        "SELECT presupuesto FROM usuarios WHERE id = %s;", (usuario_id,)
+        "SELECT saldo FROM usuarios WHERE id = %s;", (usuario_id,)
     )
     usuario = cursor.fetchone()
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuario no encontrado.")
 
     costo_total = sum(j["precio"] for j in jugadores)
-    if costo_total > usuario["presupuesto"]:
+    if costo_total > usuario["saldo"]:
         raise HTTPException(
             status_code=400,
-            detail=f"Superas el presupuesto permitido. Costo: ${costo_total:,.0f} | Límite: ${usuario['presupuesto']:,.0f}",
+            detail=f"Superas el saldo permitido. Costo: ${costo_total:,.0f} | Límite: ${usuario['saldo']:,.0f}",
         )
 
     posiciones = [j["posicion"] for j in jugadores]

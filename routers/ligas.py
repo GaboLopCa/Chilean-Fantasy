@@ -1,43 +1,59 @@
 import random
 import string
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from database import get_db_connection
 from pydantic import BaseModel
+from routers.deps import get_current_user
 
 router = APIRouter(prefix="/ligas", tags=["Ligas"])
 
 class CrearLigaRequest(BaseModel):
     nombre: str
-    creador_id: str
 
 class UnirseLigaRequest(BaseModel):
     codigo_invitacion: str
-    usuario_id: str
 
 def generar_codigo():
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
 
 @router.post("/crear")
-def crear_liga(datos: CrearLigaRequest):
+def crear_liga(
+    datos: CrearLigaRequest,
+    creador_id: str = Depends(get_current_user),
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
-        codigo = generar_codigo()
+        # Reintenta si el código generado ya existe (columna UNIQUE)
+        codigo = None
+        liga = None
+        for _ in range(5):
+            codigo = generar_codigo()
+            cursor.execute(
+                "INSERT INTO ligas (nombre, codigo_invitacion, creador_id) VALUES (%s, %s, %s) RETURNING id, nombre, codigo_invitacion;",
+                (datos.nombre, codigo, creador_id)
+            )
+            try:
+                liga = cursor.fetchone()
+                break
+            except Exception:
+                conn.rollback()
+                liga = None
 
-        cursor.execute(
-            "INSERT INTO ligas (nombre, codigo_invitacion, creador_id) VALUES (%s, %s, %s) RETURNING id, nombre, codigo_invitacion;",
-            (datos.nombre, codigo, datos.creador_id)
-        )
-        liga = cursor.fetchone()
+        if liga is None:
+            raise HTTPException(status_code=400, detail="No se pudo generar un código único. Intenta nuevamente.")
 
         # Unir automáticamente al creador a la liga
         cursor.execute(
             "INSERT INTO ligas_miembros (liga_id, usuario_id) VALUES (%s, %s);",
-            (liga["id"], datos.creador_id)
+            (liga["id"], creador_id)
         )
 
         conn.commit()
         return {"mensaje": "Liga creada exitosamente", "liga": liga}
+    except HTTPException:
+        conn.rollback()
+        raise
     except Exception as e:
         conn.rollback()
         raise HTTPException(status_code=400, detail=f"Error al crear liga: {str(e)}")
@@ -46,7 +62,10 @@ def crear_liga(datos: CrearLigaRequest):
         conn.close()
 
 @router.post("/unirse")
-def unirse_a_liga(datos: UnirseLigaRequest):
+def unirse_a_liga(
+    datos: UnirseLigaRequest,
+    usuario_id: str = Depends(get_current_user),
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
@@ -58,32 +77,30 @@ def unirse_a_liga(datos: UnirseLigaRequest):
 
         cursor.execute(
             "INSERT INTO ligas_miembros (liga_id, usuario_id) VALUES (%s, %s);",
-            (liga["id"], datos.usuario_id)
+            (liga["id"], usuario_id)
         )
         conn.commit()
         return {"mensaje": "Te has unido exitosamente a la liga."}
     except Exception as e:
         conn.rollback()
-        raise HTTPException(status_code=400, detail="Ya perteneces a esta liga o hubo un error al unirte.")
+        raise HTTPException(status_code=400, detail=f"Ya perteneces a esta liga o hubo un error al unirte. {str(e)}")
     finally:
         cursor.close()
         conn.close()
 
 @router.get("/{liga_id}/tabla")
-def obtener_tabla_liga(liga_id: str):
+def obtener_tabla_liga(
+    liga_id: str,
+    _usuario_id: str = Depends(get_current_user),
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     try:
         query = """
-            SELECT 
+            SELECT
                 u.id AS usuario_id,
                 u.nombre_usuario,
-                COALESCE(SUM(
-                    CASE 
-                        WHEN pu.es_capitan THEN COALESCE(pj.puntos, 0) * 2 
-                        ELSE COALESCE(pj.puntos, 0) 
-                    END
-                ), 0) AS puntos_totales
+                COALESCE(SUM(COALESCE(pj.puntos, 0)), 0) AS puntos_totales
             FROM ligas_miembros lm
             JOIN usuarios u ON lm.usuario_id = u.id
             LEFT JOIN plantillas_usuarios pu ON u.id = pu.usuario_id

@@ -1,18 +1,4 @@
-import os
-import psycopg2
-from dotenv import load_dotenv
-
-load_dotenv()
-
-
-def get_db_connection():
-    return psycopg2.connect(
-        host=os.getenv("DB_HOST"),
-        database=os.getenv("DB_NAME"),
-        user=os.getenv("DB_USER"),
-        password=os.getenv("DB_PASS"),
-        port=os.getenv("DB_PORT"),
-    )
+from database import get_raw_db_connection
 
 
 def calcular_puntos(stats: dict, posicion: str) -> int:
@@ -75,14 +61,8 @@ def calcular_puntos(stats: dict, posicion: str) -> int:
     puntos -= amarillas * 1
     puntos -= rojas * 3
 
-    # Dentro del proceso de cálculo de scoring por usuario:
-    cursor.execute("SELECT saldo FROM usuarios WHERE id = %s;", (usuario_id,))
-    saldo_usuario = cursor.fetchone()["saldo"]
-
-    if saldo_usuario < 0:
-        puntos_totales_jornada = 0  # Sanción automática de LaLiga Fantasy
-
     return puntos
+
 
 def guardar_puntos_jornada(
     jugador_id: int,
@@ -95,7 +75,7 @@ def guardar_puntos_jornada(
     """Guarda o actualiza las estadísticas y puntos del jugador para una jornada específica."""
     puntos_totales = calcular_puntos(stats=stats, posicion=posicion)
 
-    conn = get_db_connection()
+    conn = get_raw_db_connection()
     cursor = conn.cursor()
 
     if nombre and equipo_id:

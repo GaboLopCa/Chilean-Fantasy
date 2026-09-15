@@ -10,6 +10,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     document.getElementById("formLogin")?.addEventListener("submit", handleLogin);
+    document.getElementById("formRegistro")?.addEventListener("submit", handleRegistro);
+    document.getElementById("toggleLink")?.addEventListener("click", toggleAuthView);
     document.getElementById("btnConfirmarBlindar")?.addEventListener("click", ejecutarBlindaje);
     document.getElementById("btnCancelarBlindar")?.addEventListener("click", cerrarModalBlindar);
     document.getElementById("btnCerrarSesion")?.addEventListener("click", cerrarSesion);
@@ -48,6 +50,72 @@ async function handleLogin(e) {
     }
 }
 
+async function handleRegistro(e) {
+    e.preventDefault();
+    const nombre = document.getElementById("txtRegUsuario")?.value.trim();
+    const email = document.getElementById("txtRegEmail")?.value.trim();
+    const password = document.getElementById("txtRegPassword")?.value;
+    const lblError = document.getElementById("authError");
+
+    if (lblError) lblError.classList.add("hidden");
+
+    if (!nombre || nombre.length < 3) {
+        if (lblError) {
+            lblError.innerText = "El nombre debe tener al menos 3 caracteres.";
+            lblError.classList.remove("hidden");
+        }
+        return;
+    }
+
+    if (!password || password.length < 6) {
+        if (lblError) {
+            lblError.innerText = "La contraseña debe tener al menos 6 caracteres.";
+            lblError.classList.remove("hidden");
+        }
+        return;
+    }
+
+    try {
+        const data = await API.registro(nombre, email, password);
+        localStorage.setItem("token", data.access_token);
+        localStorage.setItem("usuario", data.nombre_usuario);
+        localStorage.setItem("usuario_id", data.usuario_id);
+
+        await mostrarPanelJuego();
+    } catch (err) {
+        if (lblError) {
+            lblError.innerText = err.message || "Error al crear la cuenta.";
+            lblError.classList.remove("hidden");
+        }
+    }
+}
+
+function toggleAuthView() {
+    const esRegistro = !document.getElementById("formRegistro")?.classList.contains("hidden");
+    const formLogin = document.getElementById("formLogin");
+    const formRegistro = document.getElementById("formRegistro");
+    const title = document.getElementById("authTitle");
+    const toggleText = document.getElementById("toggleText");
+    const toggleLink = document.getElementById("toggleLink");
+    const lblError = document.getElementById("authError");
+
+    if (lblError) lblError.classList.add("hidden");
+
+    if (esRegistro) {
+        formLogin?.classList.remove("hidden");
+        formRegistro?.classList.add("hidden");
+        if (title) title.innerText = "Iniciar Sesión";
+        if (toggleText) toggleText.innerText = "¿No tienes cuenta? ";
+        if (toggleLink) toggleLink.innerText = "Regístrate";
+    } else {
+        formLogin?.classList.add("hidden");
+        formRegistro?.classList.remove("hidden");
+        if (title) title.innerText = "Crear Cuenta";
+        if (toggleText) toggleText.innerText = "¿Ya tienes cuenta? ";
+        if (toggleLink) toggleLink.innerText = "Inicia sesión";
+    }
+}
+
 async function mostrarPanelJuego() {
     document.getElementById("secAuth")?.classList.add("hidden");
     document.getElementById("secApp")?.classList.remove("hidden");
@@ -62,7 +130,7 @@ async function cargarDatosUsuario() {
 
     try {
         const usuario = await API.obtenerUsuario(usuarioId);
-        const saldo = usuario.saldo ?? usuario.presupuesto ?? usuario.saldo_actual ?? 0;
+        const saldo = usuario.saldo ?? 0;
         UI.renderUsuario(usuario.nombre_usuario || localStorage.getItem("usuario"), saldo);
     } catch (err) {
         console.error("Error al obtener usuario:", err);
@@ -94,6 +162,15 @@ async function cargarMercado() {
     }
 }
 
+async function cargarRanking() {
+    try {
+        const data = await API.obtenerRanking();
+        UI.renderRanking(data);
+    } catch (err) {
+        console.error("Error al cargar ranking:", err);
+    }
+}
+
 async function recargarTodo() {
     await Promise.all([
         cargarDatosUsuario(),
@@ -108,7 +185,6 @@ async function handleAccionesMercado(e) {
 
     const action = btn.dataset.action;
     const jugadorId = btn.dataset.id;
-    const usuarioId = localStorage.getItem("usuario_id");
 
     if (!jugadorId || jugadorId === "id") {
         alert("Error: Identificador de jugador no válido.");
@@ -119,7 +195,7 @@ async function handleAccionesMercado(e) {
         const monto = prompt("Ingresa el monto de tu puja ($):");
         if (!monto || isNaN(monto) || Number(monto) <= 0) return;
         try {
-            const res = await API.pujar(usuarioId, jugadorId, parseInt(monto, 10));
+            const res = await API.pujar(jugadorId, parseInt(monto, 10));
             alert(res.mensaje || "Puja realizada con éxito.");
             await recargarTodo();
         } catch (err) { 
@@ -129,7 +205,7 @@ async function handleAccionesMercado(e) {
     else if (action === "clausulazo") {
         if (!confirm("¿Estás seguro de ejecutar el clausulazo? Se descontará el valor de la cláusula de tu saldo.")) return;
         try {
-            const res = await API.pagarClausula(usuarioId, jugadorId);
+            const res = await API.pagarClausula(jugadorId);
             alert(res.mensaje || "¡Clausulazo ejecutado con éxito!");
             await recargarTodo();
         } catch (err) { 
@@ -143,6 +219,12 @@ function handleAccionesPlantilla(e) {
     if (!btn) return;
 
     const action = btn.dataset.action;
+
+    if (action === "guardar-alineacion") {
+        guardarAlineacion();
+        return;
+    }
+
     const jugadorId = btn.dataset.id;
 
     if (!jugadorId || jugadorId === "id") {
@@ -152,6 +234,74 @@ function handleAccionesPlantilla(e) {
 
     if (action === "blindar") {
         abrirModalBlindar(jugadorId);
+    } else if (action === "toggle-titular") {
+        toggleTitular(jugadorId);
+    }
+}
+
+function toggleTitular(jugadorId) {
+    const cont = document.getElementById("contenedorPlantilla");
+    if (!cont) return;
+
+    const btn = cont.querySelector(`[data-action="toggle-titular"][data-id="${jugadorId}"]`);
+    if (!btn) return;
+
+    const esTitularAhora = btn.dataset.titular === "true";
+
+    if (!esTitularAhora) {
+        const titularesActuales = cont.querySelectorAll('[data-action="toggle-titular"][data-titular="true"]').length;
+        if (titularesActuales >= 11) {
+            alert("Máximo 11 titulares en la alineación.");
+            return;
+        }
+    }
+
+    const nuevo = !esTitularAhora;
+    btn.dataset.titular = String(nuevo);
+
+    const card = btn.closest("[data-jugador]");
+    const badge = card?.querySelector("span.text-xs.px-2.py-0.5");
+
+    btn.classList.toggle("bg-gray-700", !nuevo);
+    btn.classList.toggle("hover:bg-gray-600", !nuevo);
+    btn.classList.toggle("bg-emerald-600", nuevo);
+    btn.classList.toggle("hover:bg-emerald-500", nuevo);
+    btn.innerText = nuevo ? '➖ Pasar a Banca' : '➕ Poner de Titular';
+
+    if (badge) {
+        badge.className = `text-xs font-semibold px-2 py-0.5 rounded ${nuevo ? 'bg-emerald-900 text-emerald-300 border border-emerald-700' : 'bg-gray-700 text-gray-300 border border-gray-600'}`;
+        badge.innerText = nuevo ? 'Titular' : 'Banca';
+    }
+
+    if (card) {
+        card.classList.toggle("border-emerald-500", nuevo);
+        card.classList.toggle("border-gray-700", !nuevo);
+        card.classList.toggle("opacity-75", !nuevo);
+    }
+
+    UI.actualizarConteoAlineacion();
+}
+
+async function guardarAlineacion() {
+    const usuarioId = localStorage.getItem("usuario_id");
+    const alineacion = UI.leerAlineacion();
+
+    const titulares = alineacion.filter(p => p.es_titular).length;
+    if (titulares > 11) {
+        alert("Máximo 11 titulares: reduce la alineación antes de guardar.");
+        return;
+    }
+    if (titulares === 0) {
+        alert("Debes tener al menos 1 titular.");
+        return;
+    }
+
+    try {
+        const res = await API.guardarAlineacion(usuarioId, alineacion);
+        alert(res.mensaje || "Alineación guardada correctamente.");
+        await cargarMiPlantilla();
+    } catch (err) {
+        alert(err.message || "Error al guardar la alineación.");
     }
 }
 
@@ -183,7 +333,7 @@ async function ejecutarBlindaje() {
     }
 
     try {
-        const res = await API.subirClausula(usuarioId, jugadorABlindarId, incremento);
+        const res = await API.subirClausula(jugadorABlindarId, incremento);
         alert(res.mensaje || "¡Cláusula blindada con éxito!");
         cerrarModalBlindar();
         await recargarTodo();
@@ -215,5 +365,6 @@ function cambiarTab(tab) {
     } else if (tab === 'ranking') {
         document.getElementById("tabRanking")?.classList.remove("hidden");
         document.getElementById("btnTabRanking")?.classList.add("border-emerald-400", "text-emerald-400");
+        cargarRanking();
     }
 }

@@ -17,18 +17,14 @@ def registrar_usuario(usuario: UsuarioRegistro):
             (usuario.email, usuario.nombre_usuario)
         )
         existe_user = cursor.fetchone()
-        
+
         if existe_user:
             raise HTTPException(status_code=400, detail="El correo o el nombre de usuario ya está en uso.")
 
-        # 2. Insertar nuevo usuario
+        # 2. Insertar nuevo usuario con saldo inicial (bigint default definido en schema)
         pwd_hashed = hash_password(usuario.password)
         cursor.execute(
-            """
-            INSERT INTO usuarios (nombre_usuario, email, password_hash, presupuesto)
-            VALUES (%s, %s, %s, 100000000)
-            RETURNING id, nombre_usuario;
-            """,
+            "INSERT INTO usuarios (nombre_usuario, email, password_hash, saldo) VALUES (%s, %s, %s, 100000000) RETURNING id, nombre_usuario;",
             (usuario.nombre_usuario, usuario.email, pwd_hashed)
         )
         nuevo_usuario = cursor.fetchone()

@@ -9,9 +9,10 @@ def listar_jugadores(posicion: str = None, limite: int = 50):
     cursor = conn.cursor()
     try:
         query = """
-            SELECT j.id, j.nombre, j.posicion, j.precio, j.foto_url, e.nombre AS equipo 
+            SELECT j.id, j.nombre, j.posicion, j.precio, j.clausula,
+                   j.propietario_id, j.foto_url, e.nombre AS equipo
             FROM jugadores j
-            JOIN equipos e ON j.equipo_id = e.id
+            LEFT JOIN equipos e ON j.equipo_id = e.id
         """
         params = []
 

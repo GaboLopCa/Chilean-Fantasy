@@ -10,29 +10,28 @@ class Token(BaseModel):
     token_type: str
     usuario_id: str
     nombre_usuario: str
-    
-class CrearUsuarioRequest(BaseModel):
-    nombre_usuario: str
-    email: str
 
-class GuardarPlantillaRequest(BaseModel):
-    usuario_id: str
-    jugador_ids: list[int]
-    capitan_id: int
+class AlineacionItem(BaseModel):
+    jugador_id: int
+    posicion_campo: str = Field(..., min_length=1, max_length=3)
+    es_titular: bool = True
+
+class GuardarAlineacionRequest(BaseModel):
+    jugadores: list[AlineacionItem]
 
 class ActualizarEstadoJornadaRequest(BaseModel):
     estado: str
 
 class PujaRequest(BaseModel):
-    usuario_id: str
     jugador_id: int
     monto: int = Field(..., gt=0)
 
 class PagarClausulaRequest(BaseModel):
-    comprador_id: str
     jugador_id: int
 
 class AumentarClausulaRequest(BaseModel):
-    usuario_id: str
     jugador_id: int
     monto_incremento: int = Field(..., gt=0)
+
+class ComprarAgenteRequest(BaseModel):
+    jugador_id: int
