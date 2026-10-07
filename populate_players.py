@@ -1,22 +1,16 @@
 import os
 import time
-import requests
 from dotenv import load_dotenv
 from database import get_raw_db_connection
+from sportapi import api_get, asegurar_tablas_sync
 
 load_dotenv()
-
-HEADERS = {
-    "x-rapidapi-key": os.getenv("RAPIDAPI_KEY"),
-    "x-rapidapi-host": os.getenv("RAPIDAPI_HOST"),
-}
 
 
 def obtener_y_guardar_jugadores():
     conn = get_raw_db_connection()
     cursor = conn.cursor()
 
-    # 1. Obtener la lista de IDs de equipos guardados en la base de datos
     cursor.execute("SELECT id, nombre FROM equipos;")
     equipos = cursor.fetchall()
 
@@ -40,20 +34,8 @@ def obtener_y_guardar_jugadores():
 
     total_jugadores = 0
 
-    # 2. Iterar sobre cada equipo para consultar sus jugadores
     for equipo_id, equipo_nombre in equipos:
-        url_players = (
-            f"https://sportapi7.p.rapidapi.com/api/v1/team/{equipo_id}/players"
-        )
-        res_players = requests.get(url_players, headers=HEADERS)
-
-        if res_players.status_code != 200:
-            print(
-                f"⚠️ Error al obtener jugadores de {equipo_nombre}: {res_players.status_code}"
-            )
-            continue
-
-        players_data = res_players.json().get("players", [])
+        players_data = api_get(f"/team/{equipo_id}/players").get("players", [])
 
         for item in players_data:
             player = item.get("player", {})
@@ -73,10 +55,7 @@ def obtener_y_guardar_jugadores():
                 )
                 total_jugadores += 1
 
-        print(
-            f"  ✓ {equipo_nombre}: {len(players_data)} jugadores procesados."
-        )
-        # Breve pausa para evitar saturar el límite de peticiones por segundo
+        print(f"  ✓ {equipo_nombre}: {len(players_data)} jugadores procesados.")
         time.sleep(0.2)
 
     conn.commit()
@@ -89,4 +68,5 @@ def obtener_y_guardar_jugadores():
 
 
 if __name__ == "__main__":
+    asegurar_tablas_sync()
     obtener_y_guardar_jugadores()

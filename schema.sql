@@ -15,7 +15,9 @@ DROP TABLE IF EXISTS
     plantillas_usuarios,
     ligas,
     ligas_miembros,
-    transacciones
+    transacciones,
+    metadatos,
+    eventos_sincronizados
 CASCADE;
 
 DROP SEQUENCE IF EXISTS
@@ -67,6 +69,24 @@ CREATE TABLE jornadas (
                     CHECK (estado IN ('ABIERTA', 'EN_PROGRESO', 'FINALIZADA')),
     fecha_inicio    timestamp,
     fecha_fin       timestamp
+);
+
+-- -------- Metadatos (caché de datos estáticos de la API) --------
+-- Evita re-consultar /seasons (u otros endpoints estables) en cada corrida,
+-- ahorrando requests de la cuota del plan Basic.
+CREATE TABLE metadatos (
+    clave          text PRIMARY KEY,
+    valor          text NOT NULL,
+    actualizado_en timestamptz NOT NULL DEFAULT now()
+);
+
+-- -------- Eventos sincronizados (idempotencia del sync) --------
+-- Registra cada partido (event_id) cuya estadística ya fue importada.
+-- Re-ejecutar un sync salta los eventos ya registrados (0 requests extra).
+CREATE TABLE eventos_sincronizados (
+    event_id        bigint PRIMARY KEY,
+    numero_jornada  integer NOT NULL,
+    sincronizado_en timestamptz NOT NULL DEFAULT now()
 );
 
 -- -------- Puntos por jornada --------
@@ -133,3 +153,10 @@ CREATE TABLE transacciones (
                   CHECK (tipo IN ('PUJA', 'CLAUZULAZO', 'BLINDAJE', 'COMPRA_AGENTE')),
     fecha         timestamp    DEFAULT now()
 );
+
+-- ============================================================
+-- 3. Seed inicial
+-- ============================================================
+
+-- Jornadas de la temporada (1..30). Los estados se actualizan vía API/sync.
+INSERT INTO jornadas (numero) VALUES (1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12),(13),(14),(15),(16),(17),(18),(19),(20),(21),(22),(23),(24),(25),(26),(27),(28),(29),(30);

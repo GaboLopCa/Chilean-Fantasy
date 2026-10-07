@@ -24,7 +24,7 @@
 | UI - Mercado y Plantilla | Algoritmo de distribución por posiciones en `ui.js`. Renderizado diferencial de estados (Agente Libre, Rival, Propio). |
 | Eventos y Métodos | `app.js` refactorizado con control centralizado de tabs, `recargarTodo()` y controladores de pujas, blindajes y clausulazos. |
 | Motor de Puntuación | `scoring_engine.py` funcional con reglas completas de fantasy football. |
-| Sincronización API externa | `sync_jornada.py` operativo para ingestar datos de SportAPI7. |
+| Sincronización API externa | `sync_jornada.py` operativo para ingestar datos de SportAPI7, con **caché de temporada** (`metadatos`) e **idempotencia por evento** (`eventos_sincronizados`) para minimizar el consumo de la cuota. |
 | Ajuste de precios | `market_engine.py` ajusta precio/cláusula ±10% según puntos por jornada. |
 | Base de Datos | Schema unificado (`schema.sql`) con monedero `saldo` único, precios alineados y constraints de integridad. Pendiente ejecutar en Supabase. |
 
@@ -44,6 +44,13 @@
 | `row["id"]` KeyError en `guardar_alineacion` | `routers/plantillas.py` | Alta | ✅ Resuelto (acceso por `row["id"]` con RealDictCursor) |
 | `obtener_plantilla` devolvía nombres de columnas en vez de datos | `routers/plantillas.py` | Alta | ✅ Resuelto (usar `cursor.fetchall()` directo con RealDictCursor) |
 | `mercado_pujas` duplicada (sin uso) | schema de BD | Baja | ✅ Eliminada en `schema.sql` |
+| `fetch_data.py` quemaba 1 request al importar (nivel de módulo) | `fetch_data.py` | Media | ✅ Eliminado |
+| Re-sincronizar una fecha re-fetchaba lineups ya guardados | `sync_jornada.py` | Alta | ✅ Resuelto (idempotencia vía `eventos_sincronizados`) |
+| `/seasons` consultado en cada corrida de sync | `sync_jornada.py` | Media | ✅ Resuelto (caché `metadatos`) |
+| `sync_pendientes.py` recorría 1..30 sin saltar nada | `sync_pendientes.py` | Alta | ✅ Resuelto (salta `FINALIZADA`, rango `--desde/--hasta`) |
+| Endpoint marcaba `FINALIZADA` aunque quedaran partidos en juego | `routers/jornadas.py` | Alta | ✅ Resuelto (según resumen de la jornada; si no, queda `EN_PROGRESO`) |
+| `jornadas` vacía → 404 al sincronizar/marcar estado | BD | Alta | ✅ Resuelto (seed 1..30 en `schema.sql` + `seed_jornadas.py`) |
+| `validar_reglas_plantilla` existía pero nunca se llamaba | `validators.py`, `routers/plantillas.py` | Alta | ✅ Resuelto (conectado a `guardar_alineacion`; sin saldo, formación por `posicion_campo`, lineup lock por jornada activa) |
 
 ---
 
@@ -91,9 +98,11 @@ Chilean_Fantasy/
 ├── scoring_engine.py        # Cálculo y persistencia de puntos por jornada
 ├── market_engine.py         # Ajuste automático de precios/cláusulas por jornada
 ├── schema.sql               # Schema de la BD (reset completo) — se ejecuta en Supabase
-├── fetch_data.py            # Script de exploración de la API SportAPI7
-├── sync_jornada.py          # Sincroniza estadísticas de una jornada desde la API
-├── sync_pendientes.py       # Sincroniza todas las jornadas pendientes
+├── sportapi.py              # Cliente único de SportAPI7: headers, errores tipados (cuota/5xx),
+│                            #   caché de temporada en `metadatos` y verificación de tablas de sync
+├── sync_jornada.py          # Sincroniza una jornada desde la API (con idempotencia por evento)
+├── sync_pendientes.py       # Sincroniza fechas pendientes (--desde/--hasta), salta las FINALIZADAS
+├── seed_jornadas.py         # Pobla la tabla `jornadas` (fechas 1..30) sin reset
 ├── populate_teams.py        # Pobla la tabla `equipos` desde la API
 ├── populate_players.py      # Pobla la tabla `jugadores` desde la API
 ├── index.html               # SPA principal (único archivo HTML)
@@ -228,7 +237,7 @@ Conexión gestionada en `database.py` mediante `psycopg2` con `RealDictCursor` p
 
 - **Contraseñas:** Hasheadas con `bcrypt` (truncadas a 72 bytes UTF-8 como máximo).
 - **Tokens JWT:** Firmados con algoritmo HS256, expiración de 7 días.
-- **`SECRET_KEY`:** Se lee de `.env` (`SECRET_KEY`). Si falta o es menor a 16 caracteres, la app **no arranca** (fail-fast). No hay secretos en el código.
+- **`SECRET_KEY`:** Se lee de `.env` (`SECRET_KEY`). Si falta o es menor a 32 caracteres, la app **no arranca** (fail-fast). No hay secretos en el código.
 - **Protección de rutas:** `routers/deps.py` define `get_current_user` (dependency `OAuth2PasswordBearer`). Valida el JWT y devuelve el `usuario_id`. El usuario se identifica **por el token**, nunca por campos del body.
 - **Flujo de login:** El usuario envía email/nombre_usuario + contraseña → se verifica con `bcrypt.checkpw` → se retorna un `access_token` JWT.
 
@@ -339,44 +348,56 @@ Calcula puntos por jornada basado en estadísticas reales de los jugadores. Regl
 
 Sincroniza las estadísticas de todos los jugadores de una jornada específica:
 
-1. Obtiene la temporada actual del torneo
+1. Obtiene la temporada actual **desde la caché `metadatos`** (solo consulta `/seasons` si no está cacheada)
 2. Consulta los eventos (partidos) de la jornada
 3. Filtra solo partidos con estado `finished`
-4. Para cada partido, obtiene los lineups y procesa las estadísticas de cada jugador
-5. Llama a `guardar_puntos_jornada` para calcular y persistir puntos
+4. **Salta (0 requests)** los eventos ya registrados en `eventos_sincronizados` (idempotencia)
+5. Para cada evento nuevo, obtiene los lineups y procesa las estadísticas de cada jugador
+6. Llama a `guardar_puntos_jornada` para calcular y persistir puntos
 
-**Ejecución:** `python sync_jornada.py` (modificar `numero_jornada` en `__main__`)
+Devuelve un resumen: `partidos_total`, `partidos_procesados`, `partidos_pendientes` (en juego/no programados) y `partidos_reutilizados`.
 
-También se puede disparar desde la API con `POST /jornadas/{numero_jornada}/sincronizar` (requiere token): sincroniza, marca `FINALIZADA` y ejecuta el ajuste de precios. Si la API externa responde 429/502, el endpoint retorna `502` y la jornada no se marca finalizada.
+**Ejecución:** `python sync_jornada.py` (modificar `numero_jornada` en `____main__`)
+
+También se puede disparar desde la API con `POST /jornadas/{numero_jornada}/sincronizar` (requiere token):
+- **Todos los partidos terminados** → marca `FINALIZADA` y ejecuta el ajuste de precios.
+- **Quedan pendientes** → queda en `EN_PROGRESO` y se puede re-invocar sin costo para los eventos ya importados.
+- Si la API externa responde `429`, el endpoint retorna `429` (`CuotaAgotada`) y la jornada **no** se marca finalizada.
 
 ### `sync_pendientes.py`
 
-Script conceptual que itera de la fecha 1 a la 30 llamando a `sincronizar_jornada`. Solo procesa eventos terminados.
+Itera un rango de fechas sincronizando solo las que **no** están en estado `FINALIZADA` (las omite sin gastar requests). Rango configurable: `python sync_pendientes.py --desde 1 --hasta 5`.
 
-### `fetch_data.py`
+### `seed_jornadas.py`
 
-Script de exploración para consultar los torneos disponibles de la categoría Chile (ID: 49) en la API.
+Puebla la tabla `jornadas` con las fechas 1..30 (idempotente, no duplica). **Necesario** para que el endpoint `PUT /jornadas/{n}/estado` y el ciclo de sync funcionen (sin fila, devuelven 404). Si ya existe el `schema.sql` completo con el seed, no hace falta.
 
 ### Presupuesto de Requests (plan Basic)
 
-> ⚠️ El plan **Basic de RapidAPI** tiene un **límite mensual de uso** (cuota). Al superarlo, la API responde `429` (rate limit) y la app devuelve `502` desde `/jornadas/{n}/sincronizar`. El código ya no marca la jornada `FINALIZADA` en ese caso.
+> ⚠️ El plan **Basic de RapidAPI** tiene un **límite mensual de uso** (cuota). Al superarlo, la API responde `429` y la app lo propaga desde `/jornadas/{n}/sincronizar`. El código **no** marca la jornada `FINALIZADA` en ese caso.
 
-| Operación | Requests | Detalle |
-|---|---|---|
-| `populate_teams.py` | 2 | 1 temporadas + 1 equipos |
-| `populate_players.py` | ~16 (1 por equipo) | 16 clubes, pausa 0.2s |
-| `sync_jornada.py` | ~11–12 | 1 temporada + 1 eventos + 8–9 lineups |
-| Sincronizar las 30 jornadas | ~330 | `sync_pendientes.py` |
+| Operación | Requests (antes) | Requests (ahora) | Detalle de la optimización |
+|---|---|---|---|
+| `populate_teams.py` | 2 | 1–2 | `/seasons` cacheado en `metadatos` |
+| `populate_players.py` | ~16 (1 por equipo) | ~16 | igual (16 clubes, pausa 0.2s) |
+| `sync_jornada.py` (1.ª vez) | ~11–12 | ~9–10 | solo 1 eventos + 1 lineup por partido |
+| `sync_jornada.py` (re-ejecución) | ~11–12 | **1** | eventos ya sync → 0 lineup requests |
+| `sync_pendientes.py` (30 fechas) | ~330 | ~**280–300** | salta fechas `FINALIZADA` (0 requests) |
 
-> 💡 Recomendación: ante `429`, implementar **reintento con backoff exponencial** en `sync_jornada.py` / `populate_*.py` (aún no implementado).
+**Caché de temporada (`metadatos`):** la tabla `season_id`/`season_name` solo se consulta la primera vez que se corre `populate_teams` o `sync_jornada`; después se reutiliza (ahorra ~1 request por corrida).
+
+**Idempotencia por evento (`eventos_sincronizados`):** cada partido (`event_id`) se registra al importarlo; re-sincronizar una fecha con eventos ya importados **no** pide lineups de nuevo.
+
+> 💡 `sportapi.py` centraliza headers, el manejo de `429`/`5xx` y un reintento con backoff para errores de red. No reintenta ante cuota agotada (evita quemar requests inútiles).
 
 ### Checklist pendiente (cuota renovada)
 
 Pasos manuales pendientes de validar cuando la cuota mensual de RapidAPI se renueve:
 
 1. Ejecutar `POST /jornadas/1/sincronizar` hasta obtener **200 + `estado: FINALIZADA` + precios ajustados** (antes bloqueado por 429).
-2. Repoblar con `populate_teams.py` → `populate_players.py` para refrescar equipos/plantillas.
+2. Repoblar con `populate_teams.py` → `populate_players.py` para refrescar equipos/plantillas (si la API cambió datos).
 3. Verificar el **mapeo de posiciones** devuelto por la API (`G/D/M/F`) contra `calcular_puntos` de `scoring_engine.py`.
+4. Confirmar que la cuota mensual sigue vigente antes de cada corrida de `sync_pendientes.py` (mide con `GET https://...` o revisa el dashboard de RapidAPI).
 
 ### Endpoints disponibles sin usar (roadmap futuro)
 
@@ -463,7 +484,7 @@ recargarTodo() → Promise.all([
 | `DB_PORT` | Puerto de PostgreSQL |
 | `RAPIDAPI_KEY` | API key de RapidAPI (plan Basic, cuota mensual → puede dar `429`) |
 | `RAPIDAPI_HOST` | Host de la API SportAPI7 (`sportapi7.p.rapidapi.com`) |
-| `SECRET_KEY` | Clave para firmar JWT (mínimo 16 caracteres, >=32 recomendado) |
+| `SECRET_KEY` | Clave para firmar JWT (mínimo 32 caracteres, validado al arrancar) |
 
 ---
 
@@ -487,20 +508,21 @@ Para cada equipo en la BD, consulta la API por su plantilla de jugadores y los i
 
 ## Reglas de Validación de Plantilla
 
-**Archivo:** `validators.py`
+**Archivo:** `validators.py` → `validar_reglas_plantilla(cursor, titulares)`, llamado desde `routers/plantillas.py::guardar_alineacion`.
 
-Al guardar una alineación, se validan:
+Al guardar una alineación se validan los **11 titulares** (la banca no entra en estas reglas):
 
-1. **Lineup Lock:** Debe existir al menos una jornada con estado `ABIERTA`
-2. **Cantidad:** Exactamente 11 jugadores
-3. **Saldo:** El costo total no puede superar el `saldo` del usuario
-4. **Posiciones:**
+1. **Lineup Lock:** la jornada activa (menor número no finalizada) debe estar `ABIERTA`. Si está `EN_PROGRESO` o no quedan jornadas por jugar, se rechazan los cambios.
+2. **Cantidad:** exactamente 11 titulares (sin duplicados).
+3. **Existencia:** los 11 IDs deben existir en la BD (y ser del usuario; el ownership lo valida el router).
+4. **Posiciones** (según el `posicion_campo` declarado en el payload):
    - 1 Portero (G)
    - 3-5 Defensores (D)
    - 3-5 Mediocampistas (M)
    - 1-3 Delanteros (F)
-5. **Límite por equipo:** Máximo 5 jugadores del mismo club
-6. **Existencia:** Todos los IDs deben existir en la BD
+5. **Límite por equipo:** máximo 5 jugadores del mismo club (según `equipo_id` real).
+
+> **Sin validación de saldo:** comprar en el mercado ya descuenta; re-alinear no gasta dinero.
 
 ---
 
@@ -555,17 +577,17 @@ El frontend estará disponible en `http://127.0.0.1:8000`.
 
 ### Paso 5 — Motor de Puntuación (Fechas de la Liga) ✅ Completado
 
-- `POST /jornadas/{numero_jornada}/sincronizar`: sincroniza stats desde SportAPI7, calcula y persiste puntos en `puntos_jornada` (`scoring_engine.py`), marca la jornada `FINALIZADA` y ajusta precios/cláusulas (`market_engine.py`, ±10% según puntos).
+- `POST /jornadas/{numero_jornada}/sincronizar`: sincroniza stats desde SportAPI7, calcula y persiste puntos en `puntos_jornada` (`scoring_engine.py`), marca la jornada `FINALIZADA` **solo si todos los partidos terminaron** (si quedan pendientes queda `EN_PROGRESO` y se puede re-invocar sin costo) y ajusta precios/cláusulas (`market_engine.py`, ±10% según puntos).
 - Ranking y tablas de liga leen `puntos_jornada` vía `plantillas_usuarios`: el E2E confirmó 16 pts reales de jornada 1 para un titular alineado.
-- ⚠️ Pendiente (manual): la jornada a sincronizar debe existir en la tabla `jornadas` (insertar fila `numero`/`estado`), y la API externa de RapidAPI tiene rate limits (429) que pueden fallar el sync desde redes bloqueadas.
+- ✅ La jornada ya no requiere insert manual: `schema.sql` siembra las fechas 1..30 (y `seed_jornadas.py` las crea sin reset). El cuadro de `429` se maneja con `CuotaAgotada` → `429` en el endpoint.
 
 ---
 
 ## Notas Conocidas
 
-- La `SECRET_KEY` actual es 20 caracteres: funcional, pero PyJWT muestra una advertencia. Recomendado 32+ caracteres.
+- La `SECRET_KEY` actual tiene 43 caracteres (cumple el fail-fast de 32; sin advertencias de PyJWT).
 - El frontend apunta a `http://127.0.0.1:8000` en `js/api.js:1`
-- `ranking.py` y `market_engine.py` fueron integrados como parte de la resolución de issues
-- Tras crear el schema, la BD queda vacía: hay que repoblar con `populate_teams.py` → `populate_players.py`
-- Los ranking/ligas consultan `plantillas_usuarios` (aún vacía): devolverán puntos en cero hasta que exista el módulo de alineación
+- `ranking.py` suma `puntos_jornada` usando la alineación **actual** (`plantillas_usuarios`): editar la alineación después de finalizada una jornada altera el histórico. Un snapshot por jornada quedaría para una fase futura.
+- `mercado.py::comprar-agente` no valida el límite de 5 jugadores por club al comprar: la regla se aplica solo al alinear. Comprar de más es posible, alinearlos no.
+- Los ranking/ligas leen `plantillas_usuarios`: devuelven puntos en cero para usuarios sin alineación guardada.
 - `routers/plantillas.py` fue corregido para usar `RealDictCursor` correctamente: `guardar_alineacion` accede con `row["id"]` y `obtener_plantilla` devuelve `fetchall()` directo (antes devolvía los nombres de columnas).

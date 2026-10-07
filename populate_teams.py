@@ -1,40 +1,20 @@
 import os
-import requests
 from dotenv import load_dotenv
 from database import get_raw_db_connection
+from sportapi import TOURNAMENT_ID, api_get, obtener_season_actual, asegurar_tablas_sync
 
 load_dotenv()
 
-TOURNAMENT_ID = 11653
-HEADERS = {
-    "x-rapidapi-key": os.getenv("RAPIDAPI_KEY"),
-    "x-rapidapi-host": os.getenv("RAPIDAPI_HOST"),
-}
-
 
 def obtener_y_guardar_equipos():
-    # 1. Obtener las temporadas disponibles
-    url_seasons = f"https://sportapi7.p.rapidapi.com/api/v1/unique-tournament/{TOURNAMENT_ID}/seasons"
-    res_seasons = requests.get(url_seasons, headers=HEADERS)
-
-    if res_seasons.status_code != 200:
-        print(f"Error al consultar temporadas: {res_seasons.status_code}")
-        return
-
-    seasons_data = res_seasons.json()
-    latest_season_id = seasons_data["seasons"][0]["id"]
-    season_name = seasons_data["seasons"][0]["name"]
-    print(f"Cargando equipos de la temporada: {season_name} (ID: {latest_season_id})")
+    # 1. Temporada (cacheada en BD; solo consume 1 request la primera vez)
+    season_id, season_name = obtener_season_actual()
+    print(f"Cargando equipos de la temporada: {season_name} (ID: {season_id})")
 
     # 2. Obtener los equipos de esa temporada
-    url_teams = f"https://sportapi7.p.rapidapi.com/api/v1/unique-tournament/{TOURNAMENT_ID}/season/{latest_season_id}/teams"
-    res_teams = requests.get(url_teams, headers=HEADERS)
-
-    if res_teams.status_code != 200:
-        print(f"Error al consultar equipos: {res_teams.status_code}")
-        return
-
-    teams_data = res_teams.json().get("teams", [])
+    teams_data = api_get(
+        f"/unique-tournament/{TOURNAMENT_ID}/season/{season_id}/teams"
+    ).get("teams", [])
     print(f"Se encontraron {len(teams_data)} equipos.")
 
     # 3. Guardar en Supabase
@@ -51,7 +31,6 @@ def obtener_y_guardar_equipos():
     for team in teams_data:
         team_id = team["id"]
         nombre = team.get("name")
-        # Generar URL del escudo basada en la API
         escudo_url = (
             f"https://sportapi7.p.rapidapi.com/api/v1/team/{team_id}/image"
         )
@@ -66,4 +45,5 @@ def obtener_y_guardar_equipos():
 
 
 if __name__ == "__main__":
+    asegurar_tablas_sync()
     obtener_y_guardar_equipos()

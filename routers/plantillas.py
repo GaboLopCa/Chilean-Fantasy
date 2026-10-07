@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from database import get_db_connection
 from schemas import GuardarAlineacionRequest
 from routers.deps import get_current_user
+from validators import validar_reglas_plantilla
 
 router = APIRouter(prefix="/plantilla", tags=["Plantillas"])
 
@@ -62,8 +63,6 @@ def guardar_alineacion(
         raise HTTPException(status_code=403, detail="No puedes modificar la plantilla de otro usuario.")
 
     titulares = [p for p in payload.jugadores if p.es_titular]
-    if len(titulares) > 11:
-        raise HTTPException(status_code=400, detail="Máximo 11 titulares en la alineación.")
 
     posiciones_erroneas = {
         p.jugador_id
@@ -93,6 +92,16 @@ def guardar_alineacion(
                 status_code=400,
                 detail=f"No puedes alinear jugadores que no son tuyos: {sorted(ids_ajenos)}",
             )
+
+        # Reglas fantasy: 11 titulares exactos, lineup lock, formación
+        # (1G/3-5D/3-5M/1-3F por posicion_campo) y máximo 5 por club.
+        validar_reglas_plantilla(
+            cursor,
+            [
+                {"jugador_id": p.jugador_id, "posicion_campo": p.posicion_campo}
+                for p in titulares
+            ],
+        )
 
         # Reemplaza la alineación previa del usuario (si existe)
         cursor.execute("DELETE FROM plantillas_usuarios WHERE usuario_id = %s", (usuario_id,))

@@ -287,12 +287,8 @@ async function guardarAlineacion() {
     const alineacion = UI.leerAlineacion();
 
     const titulares = alineacion.filter(p => p.es_titular).length;
-    if (titulares > 11) {
-        alert("Máximo 11 titulares: reduce la alineación antes de guardar.");
-        return;
-    }
-    if (titulares === 0) {
-        alert("Debes tener al menos 1 titular.");
+    if (titulares !== 11) {
+        alert(`Debes alinear exactamente 11 titulares (llevas ${titulares}).`);
         return;
     }
 

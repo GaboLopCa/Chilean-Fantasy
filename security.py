@@ -11,10 +11,10 @@ SECRET_KEY = os.getenv("SECRET_KEY", "")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7
 
-if not SECRET_KEY or len(SECRET_KEY) < 16:
+if not SECRET_KEY or len(SECRET_KEY) < 32:
     raise RuntimeError(
         "SECRET_KEY no configurada o demasiado corta. "
-        "Define una de al menos 16 caracteres en el archivo .env"
+        "Define una de al menos 32 caracteres en el archivo .env"
     )
 
 def hash_password(password: str) -> str:

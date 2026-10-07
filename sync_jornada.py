@@ -1,30 +1,44 @@
-import os
 import time
-import requests
-from dotenv import load_dotenv
+from database import get_raw_db_connection
 from scoring_engine import guardar_puntos_jornada
-
-load_dotenv()
-
-TOURNAMENT_ID = 11653
-HEADERS = {
-    "x-rapidapi-key": os.getenv("RAPIDAPI_KEY"),
-    "x-rapidapi-host": os.getenv("RAPIDAPI_HOST"),
-}
+from sportapi import (
+    TOURNAMENT_ID,
+    api_get,
+    obtener_season_actual,
+    asegurar_tablas_sync,
+)
 
 
-def obtener_temporada_actual() -> tuple[int, str]:
-    url = f"https://sportapi7.p.rapidapi.com/api/v1/unique-tournament/{TOURNAMENT_ID}/seasons"
-    res = requests.get(url, headers=HEADERS)
-
-    if res.status_code != 200:
-        raise Exception(
-            f"Error al obtener temporada actual: {res.status_code}"
+def evento_ya_sincronizado(event_id: int) -> bool:
+    conn = get_raw_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "SELECT 1 FROM eventos_sincronizados WHERE event_id = %s;",
+            (event_id,),
         )
+        return cursor.fetchone() is not None
+    finally:
+        cursor.close()
+        conn.close()
 
-    data = res.json()
-    season = data["seasons"][0]
-    return season["id"], season["name"]
+
+def marcar_evento_sincronizado(event_id: int, numero_jornada: int):
+    conn = get_raw_db_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            """
+            INSERT INTO eventos_sincronizados (event_id, numero_jornada)
+            VALUES (%s, %s)
+            ON CONFLICT (event_id) DO NOTHING;
+            """,
+            (event_id, numero_jornada),
+        )
+        conn.commit()
+    finally:
+        cursor.close()
+        conn.close()
 
 
 def procesar_equipo_lineup(
@@ -70,23 +84,31 @@ def procesar_equipo_lineup(
     return procesados
 
 
-def sincronizar_jornada(numero_jornada: int):
-    season_id, season_name = obtener_temporada_actual()
+def sincronizar_jornada(numero_jornada: int) -> dict:
+    """Sincroniza los puntos de una jornada desde SportAPI7.
+
+    Devuelve un resumen con partidos totales, procesados y pendientes
+    (e.g. en juego o aún no programados), para que el llamador decida
+    si la jornada puede marcarse como FINALIZADA.
+    """
+    asegurar_tablas_sync()
+    season_id, season_name = obtener_season_actual()
     print(
         f"🏆 Sincronizando Fecha {numero_jornada} ({season_name} - ID: {season_id})..."
     )
 
-    url_events = f"https://sportapi7.p.rapidapi.com/api/v1/unique-tournament/{TOURNAMENT_ID}/season/{season_id}/events/round/{numero_jornada}"
-    res_events = requests.get(url_events, headers=HEADERS)
-
-    if res_events.status_code != 200:
-        print(f"❌ Error al consultar la fecha: {res_events.status_code}")
-        return
-
-    events = res_events.json().get("events", [])
+    events = api_get(
+        f"/unique-tournament/{TOURNAMENT_ID}/season/{season_id}/events/round/{numero_jornada}"
+    ).get("events", [])
     print(f"📅 Se encontraron {len(events)} partidos en la jornada.")
 
-    partidos_procesados = 0
+    resumen = {
+        "partidos_total": len(events),
+        "partidos_procesados": 0,
+        "partidos_pendientes": 0,
+        "partidos_reutilizados": 0,
+        "jugadores_registrados": 0,
+    }
 
     for event in events:
         event_id = event.get("id")
@@ -102,24 +124,22 @@ def sincronizar_jornada(numero_jornada: int):
 
         if status != "finished":
             print(
-                f" ⏳ Partido omitido (Estado: {status}): {home_team} vs {away_team}"
+                f" ⏳ Partido pendiente ({status}): {home_team} vs {away_team}"
             )
+            resumen["partidos_pendientes"] += 1
+            continue
+
+        if evento_ya_sincronizado(event_id):
+            print(
+                f" ♻️ Ya sincronizado (sin request): {home_team} vs {away_team}"
+            )
+            resumen["partidos_reutilizados"] += 1
+            resumen["partidos_procesados"] += 1
             continue
 
         print(f" ⚽ Procesando: {home_team} vs {away_team} (Event ID: {event_id})")
 
-        url_lineup = (
-            f"https://sportapi7.p.rapidapi.com/api/v1/event/{event_id}/lineups"
-        )
-        res_lineup = requests.get(url_lineup, headers=HEADERS)
-
-        if res_lineup.status_code != 200:
-            print(
-                f"  ⚠️ No se pudieron obtener estadísticas para el evento {event_id}"
-            )
-            continue
-
-        lineup_data = res_lineup.json()
+        lineup_data = api_get(f"/event/{event_id}/lineups")
         home_players = lineup_data.get("home", {}).get("players", [])
         away_players = lineup_data.get("away", {}).get("players", [])
 
@@ -130,7 +150,10 @@ def sincronizar_jornada(numero_jornada: int):
             away_players, numero_jornada, away_team_id
         )
 
-        partidos_procesados += 1
+        marcar_evento_sincronizado(event_id, numero_jornada)
+
+        resumen["partidos_procesados"] += 1
+        resumen["jugadores_registrados"] += c_home + c_away
         print(
             f"   ✓ Registrados {c_home + c_away} futbolistas de este encuentro."
         )
@@ -138,8 +161,11 @@ def sincronizar_jornada(numero_jornada: int):
         time.sleep(0.3)
 
     print(
-        f"\n🎉 Sincronización finalizada. {partidos_procesados} partidos procesados con éxito."
+        f"\n🎉 Sincronización de la Fecha {numero_jornada} finalizada: "
+        f"{resumen['partidos_procesados']}/{resumen['partidos_total']} partidos "
+        f"({resumen['partidos_pendientes']} pendientes)."
     )
+    return resumen
 
 
 if __name__ == "__main__":
